@@ -137,6 +137,7 @@
   .detail-row { display: none; }
   .detail-row.open { display: table-row; }
   .detail-row td { padding: 0; border-bottom: 1px solid var(--border); }
+  .detail-row td[colspan] { /* update colspan dynamically */ }
   .detail-inner {
     background: var(--surface); padding: 18px 24px;
     border-left: 3px solid var(--accent);
@@ -366,7 +367,7 @@ function render(data) {
   if(!ws.length){ $('content').innerHTML='<div class="state-box"><div class="state-text">暂无活跃头寸</div></div>'; return; }
 
   let h=`<table class="pos-table"><thead><tr>
-    <th>交易对</th><th style="text-align:center">钱包</th><th class="hide-m" style="text-align:center">区间</th><th style="text-align:center">状态</th><th class="hide-m" style="text-align:right">手续费</th><th style="text-align:right">日化</th><th style="text-align:right">价值</th>
+    <th>交易对</th><th style="text-align:center">钱包</th><th class="hide-m" style="text-align:center">区间</th><th style="text-align:center">状态</th><th class="hide-m" style="text-align:right">手续费</th><th style="text-align:right">累计日化</th><th style="text-align:right">当前日化</th><th style="text-align:right">价值</th>
   </tr></thead><tbody>`;
 
   for(const w of ws){
@@ -381,9 +382,10 @@ function render(data) {
         <td class="range-cell hide-m">${fP(p.lowerPrice)} — ${fP(p.upperPrice)}</td>
         <td class="status-cell"><span class="range-dot ${p.inRange?'in':'out'}"></span><span class="status-text ${p.inRange?'in':'out'}">${p.inRange?'区间内':'区间外'}</span></td>
         <td class="fees-cell hide-m" style="text-align:right">${fU(p.feesValueUSD)}</td>
-        <td class="apr-cell">${p.dailyRate ? p.dailyRate.toFixed(2)+'%' : '—'}${p.dailyRate ? `<div class="apr-sub">${p.holdDays>=1 ? p.holdDays+'天' : p.holdHours+'h'+((p.holdMinutes||0)>0?(p.holdMinutes+'m'):'')}${p.startType==='collect' ? ' ↻' : ''}</div>` : ''}</td>
+        <td class="apr-cell">${p.dailyRateCumulative ? p.dailyRateCumulative.toFixed(2)+'%' : '—'}${p.dailyRateCumulative ? `<div class="apr-sub">${p.totalDays>=1 ? p.totalDays+'天' : p.totalHours+'h'+((p.totalMinutes||0)>0?(p.totalMinutes+'m'):'')}</div>` : ''}</td>
+        <td class="apr-cell">${p.dailyRateCurrent ? p.dailyRateCurrent.toFixed(2)+'%' : '—'}${p.dailyRateCurrent ? `<div class="apr-sub">${p.holdDays>=1 ? p.holdDays+'天' : p.holdHours+'h'+((p.holdMinutes||0)>0?(p.holdMinutes+'m'):'')}${p.hasCollected ? ' ↻' : ''}</div>` : ''}</td>
         <td class="val-cell">${fU(p.totalValueUSD)}</td>
-      </tr><tr class="detail-row" id="det-${uid}"><td colspan="7">${mkDet(p)}</td></tr>`;
+      </tr><tr class="detail-row" id="det-${uid}"><td colspan="8">${mkDet(p)}</td></tr>`;
     }
     // 已结束头寸暂时隐藏
   }
