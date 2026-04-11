@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LP Vault — BSC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0e17;
+    --surface: #111827;
+    --surface-hover: #1a2236;
+    --border: #1e293b;
+    --border-light: #2a3a52;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --text-muted: #64748b;
+    --accent: #6366f1;
+    --accent-dim: rgba(99,102,241,0.12);
+    --green: #22c55e;
+    --green-dim: rgba(34,197,94,0.10);
+    --red: #ef4444;
+    --red-dim: rgba(239,68,68,0.10);
+    --yellow: #f59e0b;
+    --yellow-dim: rgba(245,158,11,0.10);
+    --font: 'Inter', -apple-system, sans-serif;
+    --mono: 'JetBrains Mono', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+  .shell { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+  /* ── Header ── */
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 0; border-bottom: 1px solid var(--border);
+  }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .logo {
+    width: 30px; height: 30px; border-radius: 6px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 800; color: #fff;
+  }
+  .header-title { font-size: 14px; font-weight: 600; color: var(--text-dim); letter-spacing: 0.04em; text-transform: uppercase; }
+  .header-right { display: flex; align-items: center; gap: 10px; }
+  .meta-text { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .chain-tag {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    color: var(--accent); background: var(--accent-dim);
+    padding: 5px 12px; border-radius: 6px;
+  }
+  .refresh-btn {
+    font-family: var(--font); font-size: 12px; font-weight: 600;
+    color: #fff; background: var(--accent); border: none;
+    padding: 7px 18px; border-radius: 6px; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .refresh-btn:hover { background: #5558e6; }
+  .refresh-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Stats Strip ── */
+  .stats-strip {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    border-bottom: 1px solid var(--border);
+  }
+  .stat-cell {
+    padding: 18px 16px; border-right: 1px solid var(--border);
+  }
+  .stat-cell:last-child { border-right: none; }
+  .stat-label { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+  .stat-val { font-family: var(--mono); font-size: 28px; font-weight: 700; line-height: 1; }
+  .stat-val.green { color: var(--green); }
+  .stat-val.red { color: var(--red); }
+  .stat-val.yellow { color: var(--yellow); }
+
+  /* ── Filter ── */
+  .filter-row {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    padding: 12px 0; border-bottom: 1px solid var(--border);
+  }
+  .filter-label { font-size: 12px; color: var(--text-muted); margin-right: 4px; }
+  .ftag {
+    font-size: 12px; font-weight: 500;
+    color: var(--text-dim); background: transparent;
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 14px; cursor: pointer; transition: all 0.12s;
+  }
+  .ftag:hover { border-color: var(--border-light); color: var(--text); }
+  .ftag.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+
+  /* ── Table ── */
+  .pos-table { width: 100%; border-collapse: collapse; }
+  .pos-table th {
+    font-size: 11px; font-weight: 500; color: var(--text-muted);
+    letter-spacing: 0.04em; text-transform: uppercase;
+    text-align: left; padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--bg); z-index: 2;
+  }
+  .pos-table th:last-child { text-align: right; }
+  .pos-row {
+    cursor: pointer; transition: background 0.12s;
+    border-bottom: 1px solid var(--border);
+  }
+  .pos-row:hover { background: var(--surface-hover); }
+  .pos-row td {
+    font-size: 14px; font-weight: 500; padding: 14px 14px;
+    vertical-align: middle; color: var(--text);
+  }
+  .pos-row td:last-child { text-align: right; }
+  .pair-cell { font-weight: 700; font-size: 15px; }
+  .protocol-tag {
+    font-family: var(--mono); font-size: 10px; font-weight: 700;
+    padding: 2px 8px; border-radius: 4px; margin-left: 8px;
+    vertical-align: middle;
+  }
+  .protocol-tag.v3 { color: var(--yellow); background: var(--yellow-dim); }
+  .protocol-tag.v4 { color: #22d3ee; background: rgba(34,211,238,0.12); }
+  .wallet-cell { font-size: 13px; color: var(--text-dim); text-align: center; }
+  .range-cell { font-family: var(--mono); font-size: 12px; color: var(--text-muted); text-align: center; }
+  .status-cell { text-align: center; white-space: nowrap; }
+  .range-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .range-dot.in { background: var(--green); box-shadow: 0 0 6px rgba(34,197,94,0.5); }
+  .range-dot.out { background: var(--red); box-shadow: 0 0 6px rgba(239,68,68,0.5); }
+  .status-text { font-size: 13px; font-weight: 600; vertical-align: middle; }
+  .status-text.in { color: var(--green); }
+  .status-text.out { color: var(--red); }
+  .fees-cell { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--yellow); }
+  .apr-cell { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--green); text-align: right; }
+  .apr-sub { font-size: 10px; color: var(--text-muted); font-weight: 400; }
+  .val-cell { font-family: var(--mono); font-size: 15px; font-weight: 700; }
+
+  /* ── Detail row ── */
+  .detail-row { display: none; }
+  .detail-row.open { display: table-row; }
+  .detail-row td { padding: 0; border-bottom: 1px solid var(--border); }
+  .detail-inner {
+    background: var(--surface); padding: 18px 24px;
+    border-left: 3px solid var(--accent);
+  }
+  .detail-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px; margin-bottom: 14px;
+  }
+  .d-label { font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
+  .d-val { font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--text); }
+  .d-val.fees { color: var(--yellow); }
+  .d-sub { font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-top: 1px; }
+  .range-bar-labels { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+  .range-bar-track { height: 5px; background: var(--border-light); border-radius: 3px; position: relative; }
+  .range-bar-fill { position: absolute; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #6366f1, #22c55e); }
+  .range-bar-cursor {
+    position: absolute; top: 50%; transform: translate(-50%, -50%);
+    width: 11px; height: 11px; background: #fff;
+    border: 3px solid var(--accent); border-radius: 50%;
+    box-shadow: 0 0 8px rgba(99,102,241,0.5);
+  }
+  .range-bar-current { text-align: center; margin-top: 8px; font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+  .range-bar-current span { color: var(--accent); font-weight: 600; }
+
+  /* ── Closed ── */
+  .closed-sep td { padding: 6px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  .closed-toggle {
+    font-size: 12px; color: var(--text-muted); background: transparent;
+    border: none; cursor: pointer; transition: color 0.12s; padding: 4px 0;
+  }
+  .closed-toggle:hover { color: var(--text-dim); }
+  .closed-row { display: none; }
+  .closed-row.open { display: table-row; }
+  .closed-row td { padding: 0; border-bottom: 1px solid var(--border); }
+  .closed-inner { padding: 10px 20px; background: var(--surface); display: flex; flex-wrap: wrap; gap: 6px; }
+  .closed-chip {
+    font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 3px 10px;
+  }
+
+  /* ── States ── */
+  .state-box { display: flex; flex-direction: column; align-items: center; padding: 80px 0; }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .state-text { margin-top: 14px; font-size: 13px; color: var(--text-muted); }
+  .error-box {
+    background: var(--red-dim); border: 1px solid rgba(239,68,68,0.2);
+    border-radius: 8px; padding: 18px 24px; text-align: center; margin: 20px 0;
+  }
+  .error-box p { font-size: 13px; color: var(--red); }
+
+  /* ── Footer ── */
+  .footer {
+    border-top: 1px solid var(--border); padding: 14px 0 24px; margin-top: 16px;
+    display: flex; justify-content: space-between;
+    font-size: 11px; color: var(--text-muted);
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    .shell { padding: 0 10px; }
+    .stats-strip { grid-template-columns: repeat(2, 1fr); }
+    .stat-cell:nth-child(2n) { border-right: none; }
+    .stat-val { font-size: 22px; }
+    .pos-table th, .pos-row td { padding: 10px 8px; }
+    .pair-cell { font-size: 13px; }
+    .val-cell { font-size: 13px; }
+    .hide-m { display: none; }
+    .header { flex-wrap: wrap; gap: 8px; }
+    .detail-grid { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 480px) {
+    .stats-strip { grid-template-columns: 1fr; }
+    .stat-cell { border-right: none !important; border-bottom: 1px solid var(--border); }
+    .stat-cell:last-child { border-bottom: none; }
+    .detail-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">V</div>
+      <span class="header-title">LP Vault</span>
+    </div>
+    <div class="header-right">
+      <span class="meta-text" id="lastRefresh"></span>
+      <span class="chain-tag">BSC</span>
+      <button class="refresh-btn" id="refreshBtn" onclick="loadData(true)">刷新</button>
+    </div>
+  </div>
+
+  <div class="stats-strip" id="statsBar" style="display:none;">
+    <div class="stat-cell">
+      <div class="stat-label">总价值</div>
+      <div class="stat-val" id="totalValue" style="color:var(--green);">—</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-label">活跃头寸</div>
+      <div class="stat-val" id="activeCount">0</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-label">区间内</div>
+      <div class="stat-val green" id="inRangeCount">0</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-label">区间外</div>
+      <div class="stat-val red" id="outRangeCount">0</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-label">待领手续费</div>
+      <div class="stat-val yellow" id="totalFees">$0</div>
+    </div>
+  </div>
+
+  <div id="filterBar" class="filter-row" style="display:none;"></div>
+
+  <div id="content">
+    <div class="state-box">
+      <div class="spinner"></div>
+      <div class="state-text">加载链上数据…</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>LP VAULT · UNISWAP V3+V4 · BSC</span>
+    <span id="countdown"></span>
+  </div>
+</div>
+
+<script>
+const RI = 10 * 60 * 1000;
+let nextR = Date.now() + RI;
+let curData = null, activeF = 'all', expId = null;
+
+function $(id) { return document.getElementById(id); }
+function fU(v) {
+  if (v==null||isNaN(v)) return '$0';
+  if (v>=1e6) return '$'+(v/1e6).toFixed(2)+'M';
+  if (v>=1000) return '$'+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if (v>=1) return '$'+v.toFixed(2);
+  if (v>=0.01) return '$'+v.toFixed(4);
+  return '$'+v.toFixed(6);
+}
+function fN(v,d=4) {
+  if (v==null||isNaN(v)||v===0) return '0';
+  if (Math.abs(v)>=1e6) return (v/1e6).toFixed(2)+'M';
+  if (Math.abs(v)>=1000) return v.toLocaleString('en-US',{maximumFractionDigits:d});
+  if (Math.abs(v)>=1) return v.toFixed(d);
+  if (Math.abs(v)>=0.0001) return v.toFixed(6);
+  return v.toExponential(2);
+}
+function fP(v) {
+  if (!v||isNaN(v)) return '0';
+  if (v>=1000) return v.toLocaleString('en-US',{maximumFractionDigits:2});
+  if (v>=1) return v.toFixed(4);
+  if (v>=0.0001) return v.toFixed(6);
+  return v.toExponential(3);
+}
+function tA(ts) {
+  const d=Date.now()-ts;
+  if (d<60000) return '刚刚';
+  if (d<3600000) return Math.floor(d/60000)+'分钟前';
+  return Math.floor(d/3600000)+'小时前';
+}
+function sA(a) { return a.slice(0,6)+'…'+a.slice(-4); }
+
+function togExp(uid) {
+  const r = $('det-'+uid);
+  if (!r) return;
+  r.classList.toggle('open');
+}
+function togCl(id) {
+  const el=$('cl-'+id); if(!el) return;
+  el.classList.toggle('open');
+  const b=$('cb-'+id);
+  if(b) b.textContent=b.getAttribute('data-t')+(el.classList.contains('open')?' ▾':' ▸');
+}
+
+function mkDet(p) {
+  const pct = p.inRange
+    ? Math.min(100, Math.max(0, ((p.currentPrice-p.lowerPrice)/(p.upperPrice-p.lowerPrice))*100))
+    : (p.currentPrice<p.lowerPrice ? 0 : 100);
+  return `<div class="detail-inner">
+    <div class="detail-grid">
+      <div><div class="d-label">${p.token0.symbol} 数量</div><div class="d-val">${fN(p.amount0)}</div>${p.token0USD?`<div class="d-sub">${fU(p.amount0*p.token0USD)}</div>`:''}</div>
+      <div><div class="d-label">${p.token1.symbol} 数量</div><div class="d-val">${fN(p.amount1)}</div>${p.token1USD?`<div class="d-sub">${fU(p.amount1*p.token1USD)}</div>`:''}</div>
+      <div><div class="d-label">手续费 ${p.token0.symbol}</div><div class="d-val fees">${fN(p.feesOwed0)}</div>${p.token0USD?`<div class="d-sub">${fU(p.feesOwed0*p.token0USD)}</div>`:''}</div>
+      <div><div class="d-label">手续费 ${p.token1.symbol}</div><div class="d-val fees">${fN(p.feesOwed1)}</div>${p.token1USD?`<div class="d-sub">${fU(p.feesOwed1*p.token1USD)}</div>`:''}</div>
+      <div><div class="d-label">头寸价值</div><div class="d-val">${fU(p.positionValueUSD)}</div></div>
+      <div><div class="d-label">手续费价值</div><div class="d-val fees">${fU(p.feesValueUSD)}</div></div>
+    </div>
+    <div class="range-bar-labels"><span>下限: ${fP(p.lowerPrice)}</span><span>上限: ${fP(p.upperPrice)}</span></div>
+    <div class="range-bar-track"><div class="range-bar-fill" style="left:0;width:${pct}%"></div><div class="range-bar-cursor" style="left:${pct}%"></div></div>
+    <div class="range-bar-current">当前价: <span>${fP(p.currentPrice)}</span></div>
+  </div>`;
+}
+
+function render(data) {
+  curData=data; expId=null;
+  $('statsBar').style.display='grid';
+  $('totalValue').textContent=fU(data.grandTotalUSD);
+  $('activeCount').textContent=data.stats.totalActive;
+  $('inRangeCount').textContent=data.stats.totalInRange;
+  $('outRangeCount').textContent=data.stats.totalOutOfRange;
+  $('totalFees').textContent=fU(data.stats.totalFees);
+  $('lastRefresh').textContent=tA(data.timestamp);
+
+  const wA=data.wallets.filter(w=>w.positions.some(p=>p.liquidityActive));
+  const fb=$('filterBar');
+  if(wA.length>1){
+    fb.style.display='flex';
+    let fh='<span class="filter-label">筛选</span>';
+    fh+=`<button class="ftag ${activeF==='all'?'active':''}" onclick="setF('all')">全部</button>`;
+    for(const w of wA) fh+=`<button class="ftag ${activeF===w.address?'active':''}" onclick="setF('${w.address}')">${w.name}</button>`;
+    fb.innerHTML=fh;
+  } else fb.style.display='none';
+
+  let ws=activeF==='all'?wA:wA.filter(w=>w.address===activeF);
+  if(!ws.length){ $('content').innerHTML='<div class="state-box"><div class="state-text">暂无活跃头寸</div></div>'; return; }
+
+  let h=`<table class="pos-table"><thead><tr>
+    <th>交易对</th><th style="text-align:center">钱包</th><th class="hide-m" style="text-align:center">区间</th><th style="text-align:center">状态</th><th class="hide-m" style="text-align:right">手续费</th><th style="text-align:right">日化</th><th style="text-align:right">价值</th>
+  </tr></thead><tbody>`;
+
+  for(const w of ws){
+    const act=w.positions.filter(p=>p.liquidityActive);
+    const cls=w.positions.filter(p=>!p.liquidityActive);
+    for(const p of act){
+      const uid=w.address.slice(-6)+'-'+p.tokenId;
+      const proto=p.protocol||'V3';
+      h+=`<tr class="pos-row" onclick="togExp('${uid}')">
+        <td class="pair-cell">${p.token0.symbol}/${p.token1.symbol}<span class="protocol-tag ${proto.toLowerCase()}">${proto}</span></td>
+        <td class="wallet-cell">${w.name}</td>
+        <td class="range-cell hide-m">${fP(p.lowerPrice)} — ${fP(p.upperPrice)}</td>
+        <td class="status-cell"><span class="range-dot ${p.inRange?'in':'out'}"></span><span class="status-text ${p.inRange?'in':'out'}">${p.inRange?'区间内':'区间外'}</span></td>
+        <td class="fees-cell hide-m" style="text-align:right">${fU(p.feesValueUSD)}</td>
+        <td class="apr-cell">${p.dailyRate ? p.dailyRate.toFixed(2)+'%' : '—'}${p.dailyRate ? `<div class="apr-sub">${p.holdDays>=1 ? p.holdDays+'天' : p.holdHours+'h'+((p.holdMinutes||0)>0?(p.holdMinutes+'m'):'')}${p.startType==='collect' ? ' ↻' : ''}</div>` : ''}</td>
+        <td class="val-cell">${fU(p.totalValueUSD)}</td>
+      </tr><tr class="detail-row" id="det-${uid}"><td colspan="7">${mkDet(p)}</td></tr>`;
+    }
+    // 已结束头寸暂时隐藏
+  }
+  h+='</tbody></table>';
+  $('content').innerHTML=h;
+}
+
+function setF(v){activeF=v;if(curData)render(curData);}
+
+async function loadData(fr=false){
+  const b=$('refreshBtn'); b.disabled=true; b.textContent='加载中…';
+  try{
+    const r=await fetch('/api/positions'+(fr?'?refresh=true':''));
+    if(!r.ok) throw new Error('API 错误: '+r.status);
+    render(await r.json());
+    nextR=Date.now()+RI;
+  }catch(e){ $('content').innerHTML='<div class="error-box"><p>⚠ '+e.message+'</p></div>'; }
+  finally{ b.disabled=false; b.textContent='刷新'; }
+}
+
+setInterval(()=>{
+  const rem=Math.max(0,nextR-Date.now());
+  const m=Math.floor(rem/60000), s=Math.floor((rem%60000)/1000);
+  $('countdown').textContent=`下次刷新: ${m}分${s}秒`;
+  if(rem<=0){loadData(true);nextR=Date.now()+RI;}
+},1000);
+
+loadData();
+</script>
+</body>
+</html>
