@@ -9,6 +9,7 @@ const PORT = parseInt(process.env.PORT || '5179');
 // --- Config (from .env) ---
 const WALLETS = JSON.parse(process.env.WALLETS || '[]');
 const BSC_RPC = process.env.BSC_RPC || 'https://bsc-dataseed.binance.org';
+const ANKR_ADVANCED_URL = process.env.ANKR_ADVANCED_URL || (process.env.BSC_RPC?.includes('ankr.com') ? process.env.BSC_RPC.replace('/bsc/', '/multichain/') : '');
 // V3
 const V3_POSITION_MANAGER = '0x7b8A01B39D58278b5DE7e48c8449c9f4F5170613';
 const V3_FACTORY = '0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7';
@@ -73,9 +74,9 @@ const v4IdCache = {};
 const V4_ID_CACHE_TTL = 10 * 60 * 1000; // 10 min, match main cache
 
 // --- Concurrency control ---
-const MAX_CONCURRENT = 3; // was 2, moderate increase
-const BATCH_SIZE = 8; // max parallel RPC calls per batch (was 5)
-const BATCH_DELAY = 200; // ms between batches (was 300)
+const MAX_CONCURRENT = 2;
+const BATCH_SIZE = 5; // max parallel RPC calls per batch
+const BATCH_DELAY = 300; // ms between batches
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -316,18 +317,6 @@ async function getV4PositionIds(walletAddress) {
   return ids;
 }
 
-// V4: get latest fee-collect-like events (amount=0) for a wallet in recent window
-async function getV4CollectHints(walletAddress) {
-  const addr = walletAddress.toLowerCase();
-  const query = `{ modifyLiquidities(first: 100, where: { origin: "${addr}", amount: "0" }, orderBy: timestamp, orderDirection: desc) { timestamp tickLower tickUpper token0 token1 } }`;
-  try {
-    const data = await graphQuery(V4_SUBGRAPH_ID, query);
-    return data?.modifyLiquidities || [];
-  } catch (e) {
-    return [];
-  }
-}
-
 // V4: get token info, handling native BNB (address(0))
 async function getTokenInfoV4(address) {
   if (address === ethers.ZeroAddress || address === '0x0000000000000000000000000000000000000000') {
@@ -339,29 +328,32 @@ async function getTokenInfoV4(address) {
 // V3: query subgraph for position creation timestamps + collected fees history
 async function getV3SubgraphData(walletAddress) {
   const addr = walletAddress.toLowerCase();
-  const query = `{ positions(first: 200, where: { owner: "${addr}" }) { id transaction { timestamp } } }`;
+  const query = `{ positions(first: 200, where: { owner: "${addr}" }) { id transaction { timestamp } collectedFeesToken0 collectedFeesToken1 } }`;
   try {
     const data = await graphQuery(V3_SUBGRAPH_ID, query);
     if (!data?.positions || data.positions.length === 0) {
-      console.log(`V3 subgraph: no positions found for ${addr.slice(0,10)}..., using chain fallback`);
       const chainCreated = await getV3CreatedFromChain(walletAddress);
-      return { created: chainCreated };
+      return { created: chainCreated, collectedFees: {} };
     }
     const created = {};
+    const collectedFees = {};
     for (const p of data.positions) {
       const ts = p.transaction?.timestamp;
       if (ts) created[p.id] = Number(ts) * 1000;
+      collectedFees[p.id] = {
+        token0: parseFloat(p.collectedFeesToken0 || '0'),
+        token1: parseFloat(p.collectedFeesToken1 || '0'),
+      };
     }
-    console.log(`V3 subgraph: ${data.positions.length} positions, created keys sample: ${Object.keys(created).slice(0,5).join(', ')}`);
     if (Object.keys(created).length === 0) {
       const chainCreated = await getV3CreatedFromChain(walletAddress);
-      return { created: chainCreated };
+      return { created: chainCreated, collectedFees };
     }
-    return { created };
+    return { created, collectedFees };
   } catch (e) {
     console.error(`V3 subgraph query failed for ${addr}:`, e.message?.slice(0, 80));
     const chainCreated = await getV3CreatedFromChain(walletAddress);
-    return { created: chainCreated };
+    return { created: chainCreated, collectedFees: {} };
   }
 }
 
@@ -387,10 +379,52 @@ async function getV3LastCollectTimes(tokenIds) {
 
   if (toQuery.length === 0) return results;
 
+  // Strategy 1: Ankr Advanced API (one request per token, ~200ms each)
+  if (ANKR_ADVANCED_URL) {
+    const remaining = [];
+    for (const tid of toQuery) {
+      const key = tid.toString();
+      try {
+        const tokenIdHex = ethers.zeroPadValue(ethers.toBeHex(tid), 32);
+        const body = {
+          jsonrpc: '2.0', method: 'ankr_getLogs', id: 1,
+          params: {
+            blockchain: 'bsc',
+            address: [V3_POSITION_MANAGER],
+            topics: [[COLLECT_EVENT_TOPIC], [tokenIdHex]],
+            fromBlock: 1, toBlock: 'latest',
+            pageSize: 1, descOrder: true
+          }
+        };
+        const res = await fetch(ANKR_ADVANCED_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body), signal: AbortSignal.timeout(10000)
+        });
+        const data = await res.json();
+        if (data.result?.logs?.[0]) {
+          const log = data.result.logs[0];
+          const time = parseInt(log.timestamp, 16) * 1000;
+          results[key] = time;
+          v3CollectCache[key] = { collectAt: time, ts: now };
+          console.log(`  Last collect for #${key}: ${new Date(time).toISOString()} (Ankr Advanced)`);
+        } else {
+          v3CollectCache[key] = { collectAt: 0, ts: now };
+        }
+      } catch (e) {
+        console.log(`  Ankr collect failed for #${key}: ${e.message?.slice(0, 80)}, queuing fallback`);
+        remaining.push(tid);
+      }
+    }
+    if (remaining.length === 0) return results;
+    toQuery.length = 0;
+    toQuery.push(...remaining);
+  }
+
+  // Strategy 2: Fallback to chunked getLogs scan (publicnode)
   try {
     const currentBlock = await logProvider.getBlockNumber();
-    const blockStep = 5000; // publicnode supports up to 50000
-    const lookbackBlocks = 432000; // ~15 days on BSC (~3s/block)
+    const blockStep = 5000;
+    const lookbackBlocks = 864000; // ~30 days
     const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
 
     for (const tid of toQuery) {
@@ -399,7 +433,6 @@ async function getV3LastCollectTimes(tokenIds) {
         const tokenIdHex = ethers.zeroPadValue(ethers.toBeHex(tid), 32);
         let foundBlockNumber = null;
 
-        // Search backwards in chunks, stop at first chunk that has a Collect event
         for (let end = currentBlock; end >= fromBlock; end -= blockStep) {
           const start = Math.max(fromBlock, end - blockStep + 1);
           try {
@@ -409,13 +442,12 @@ async function getV3LastCollectTimes(tokenIds) {
               fromBlock: start,
               toBlock: end,
             });
-
             if (logs.length > 0) {
               foundBlockNumber = logs[logs.length - 1].blockNumber;
               break;
             }
           } catch (e) {
-            await sleep(500); // rate limited, wait
+            await sleep(500);
           }
           await sleep(50);
         }
@@ -448,31 +480,60 @@ const TRANSFER_EVENT_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a116
 const ZERO_ADDR_PADDED = ethers.zeroPadValue('0x0000000000000000000000000000000000000000', 32);
 
 async function getV3CreatedFromChain(walletAddress) {
-  // Skip per-wallet chain fallback entirely — too expensive with rate limits.
-  // Active positions get createdAt filled individually via getV3MintTimeByTokenId().
+  // Returns empty map — real per-tokenId lookup happens in getV3MintTime
   return {};
 }
 
-// Per-tokenId mint time lookup via logProvider (chunked, used for active positions only)
-const mintTimeCache = {};
-const MINT_TIME_TTL = 6 * 60 * 60 * 1000; // 6h — mint time never changes
-
-async function getV3MintTimeByTokenId(tokenId) {
+// Per-tokenId mint time lookup (chunked, backward scan from latest)
+async function getV3MintTime(tokenId) {
   const key = tokenId.toString();
-  const cached = mintTimeCache[key];
-  if (cached && cached.time > 0) return cached.time; // permanent once found
-  if (cached && (Date.now() - cached.ts < MINT_TIME_TTL)) return cached.time; // negative cache
+  const cached = v3CreatedChainCache[key];
+  if (cached && (Date.now() - cached.ts < V3_CREATED_CHAIN_TTL)) return cached.time;
 
+  // Strategy 1: Ankr Advanced API (single request, ~200ms)
+  if (ANKR_ADVANCED_URL) {
+    try {
+      const body = {
+        jsonrpc: '2.0', method: 'ankr_getLogs', id: 1,
+        params: {
+          blockchain: 'bsc',
+          address: [V3_POSITION_MANAGER],
+          topics: [
+            [TRANSFER_EVENT_TOPIC],
+            [ZERO_ADDR_PADDED],
+            [],
+            [ethers.zeroPadValue(ethers.toBeHex(tokenId), 32)]
+          ],
+          fromBlock: 1, toBlock: 'latest', pageSize: 1, descOrder: false
+        }
+      };
+      const res = await fetch(ANKR_ADVANCED_URL, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body), signal: AbortSignal.timeout(10000)
+      });
+      const data = await res.json();
+      if (data.result?.logs?.[0]) {
+        const log = data.result.logs[0];
+        const time = parseInt(log.timestamp, 16) * 1000;
+        v3CreatedChainCache[key] = { time, ts: Date.now() };
+        console.log(`  Mint time for #${key}: ${new Date(time).toISOString()} (Ankr Advanced)`);
+        return time;
+      }
+    } catch (e) {
+      console.log(`  Ankr Advanced mint time failed for #${key}: ${e.message?.slice(0, 80)}, falling back to chain scan`);
+    }
+  }
+
+  // Strategy 2: Fallback to chunked getLogs scan
   try {
     const currentBlock = await logProvider.getBlockNumber();
-    const lookback = 2600000; // ~90 days
+    const blockStep = 5000;
+    const lookback = 864000; // ~30 days
     const fromBlock = Math.max(0, currentBlock - lookback);
-    const blockStep = 10000; // publicnode supports up to 50000, use 10000 for speed
     const tokenIdHex = ethers.zeroPadValue(ethers.toBeHex(tokenId), 32);
 
-    // Forward scan (oldest first)
-    for (let start = fromBlock; start <= currentBlock; start += blockStep) {
-      const end = Math.min(start + blockStep - 1, currentBlock);
+    for (let end = currentBlock; end >= fromBlock; end -= blockStep) {
+      const start = Math.max(fromBlock, end - blockStep + 1);
       try {
         const logs = await logProvider.getLogs({
           address: V3_POSITION_MANAGER,
@@ -483,21 +544,20 @@ async function getV3MintTimeByTokenId(tokenId) {
         if (logs.length > 0) {
           const block = await logProvider.getBlock(logs[0].blockNumber);
           const time = block ? block.timestamp * 1000 : 0;
-          mintTimeCache[key] = { time, ts: Date.now() };
-          console.log(`  Mint time for #${key}: ${new Date(time).toISOString()} (block ${logs[0].blockNumber})`);
+          v3CreatedChainCache[key] = { time, ts: Date.now() };
+          console.log(`  Mint time for #${key}: ${new Date(time).toISOString()} (chain scan)`);
           return time;
         }
       } catch (e) {
-        await sleep(500); // rate limited backoff
+        await sleep(500);
       }
-      await sleep(50); // Ankr private has generous limits
+      await sleep(50);
     }
   } catch (e) {
     console.error(`  Mint time query failed for #${key}:`, e.message?.slice(0, 120));
   }
 
-  console.log(`  Mint time NOT FOUND for #${key} within 15-day lookback`);
-  mintTimeCache[key] = { time: 0, ts: Date.now() };
+  v3CreatedChainCache[key] = { time: 0, ts: Date.now() };
   return 0;
 }
 
@@ -646,7 +706,7 @@ async function fetchWalletPositions(wallet, positionManager, factory) {
   if (count === 0) return [];
 
   // Fetch creation timestamps + collected fees from subgraph
-  const { created: createdMap } = await getV3SubgraphData(walletAddress);
+  const { created: createdMap, collectedFees: collectedFeesMap } = await getV3SubgraphData(walletAddress);
 
   console.log(`  ${walletName} V3: ${count} NFTs found`);
 
@@ -734,7 +794,7 @@ async function fetchWalletPositions(wallet, positionManager, factory) {
       protocol: 'V3',
       createdAt: createdMap[tokenIds[i].toString()] || 0,
       lastCollectAt: 0, // filled after all positions fetched
-
+      collectedFees: collectedFeesMap[tokenIds[i].toString()] || { token0: 0, token1: 0 },
     });
   }
 
@@ -780,60 +840,23 @@ async function fetchPositions(forceRefresh = false) {
   }
 
   if (activeV3Positions.length > 0) {
-    // 1. Fill createdAt for active positions that are still missing it
-    //    (subgraph returns empty, chain fallback per-wallet may have missed due to rate limits)
-    const missing = activeV3Positions.filter(p => !p.createdAt);
-    if (missing.length > 0) {
-      console.log(`Fetching mint times for ${missing.length} active V3 positions: ${missing.map(p => p.tokenId).join(', ')}`);
-      const MINT_TIMEOUT = 15000; // 15s per token
-      await Promise.all(missing.map(async (pos) => {
-        try {
-          pos.createdAt = await Promise.race([
-            getV3MintTimeByTokenId(BigInt(pos.tokenId)),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), MINT_TIMEOUT))
-          ]);
-        } catch (e) {
-          console.log(`  Mint time timeout for #${pos.tokenId}, skipping`);
-          pos.createdAt = 0;
-        }
-      }));
+    // 1. Fill createdAt for positions missing it
+    const needCreatedAt = activeV3Positions.filter(p => !p.createdAt);
+    if (needCreatedAt.length > 0) {
+      console.log(`Fetching mint times for ${needCreatedAt.length} V3 positions missing createdAt...`);
+      for (const pos of needCreatedAt) {
+        pos.createdAt = await getV3MintTime(BigInt(pos.tokenId));
+      }
     }
 
-    // 2. Fetch Collect events (with 30s timeout)
+    // 2. Fetch Collect events
     const tokenIds = activeV3Positions.map(p => BigInt(p.tokenId));
     console.log(`Fetching Collect events for ${tokenIds.length} active V3 positions...`);
-    try {
-      const collectTimes = await Promise.race([
-        getV3LastCollectTimes(tokenIds),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000))
-      ]);
-      for (const pos of activeV3Positions) {
-        pos.lastCollectAt = collectTimes[pos.tokenId] || 0;
-      }
-      console.log(`Collect events: found ${Object.keys(collectTimes).length} positions with collects`);
-    } catch (e) {
-      console.log(`Collect events timed out, skipping`);
+    const collectTimes = await getV3LastCollectTimes(tokenIds);
+    for (const pos of activeV3Positions) {
+      pos.lastCollectAt = collectTimes[pos.tokenId] || 0;
     }
-  }
-
-  // For active V4 positions: infer last fee-collect reset time from zero-amount ModifyLiquidity events
-  const activeV4ByWallet = new Map();
-  for (const wr of walletResults) {
-    const activeV4 = wr.positions.filter(p => p.protocol === 'V4' && p.liquidityActive);
-    if (activeV4.length > 0) activeV4ByWallet.set(wr.address.toLowerCase(), activeV4);
-  }
-  for (const [walletAddr, positions] of activeV4ByWallet.entries()) {
-    const hints = await getV4CollectHints(walletAddr);
-    for (const pos of positions) {
-      const match = hints.find(h =>
-        Number(h.tickLower) === pos.tickLower &&
-        Number(h.tickUpper) === pos.tickUpper &&
-        Number(h.timestamp) * 1000 >= pos.createdAt
-      );
-      if (match) {
-        pos.lastCollectAt = Number(match.timestamp) * 1000;
-      }
-    }
+    console.log(`Collect events: found ${Object.keys(collectTimes).length} positions with collects`);
   }
 
   // Collect all token addresses and all positions for USD pricing
@@ -873,7 +896,27 @@ async function fetchPositions(forceRefresh = false) {
       pos.feesValueUSD = pos.feesOwed0 * price0 + pos.feesOwed1 * price1;
       pos.totalValueUSD = pos.positionValueUSD + pos.feesValueUSD;
 
-      // Daily rate: from last collect (or creation if never collected), pending fees only
+      // === Two daily rate metrics ===
+      // 1. Cumulative daily rate: from creation, total fees (collected + pending) / principal / total days
+      if (pos.createdAt > 0 && pos.positionValueUSD >= 10) {
+        const totalMs = Date.now() - pos.createdAt;
+        const totalDays = totalMs / (24 * 60 * 60 * 1000);
+        const totalHours = totalMs / (60 * 60 * 1000);
+        if (totalDays > 0) {
+          // Total fees = already collected (from subgraph) + pending (unclaimed)
+          const cf = pos.collectedFees || { token0: 0, token1: 0 };
+          const collectedUSD = cf.token0 * price0 + cf.token1 * price1;
+          const totalFeesUSD = collectedUSD + pos.feesValueUSD;
+          if (totalFeesUSD > 0) {
+            pos.dailyRateCumulative = (totalFeesUSD / pos.positionValueUSD) / totalDays * 100;
+          }
+          pos.totalDays = totalDays >= 1 ? Math.floor(totalDays) : 0;
+          pos.totalHours = Math.floor(totalHours);
+          pos.totalMinutes = Math.floor((totalMs % (60 * 60 * 1000)) / (60 * 1000));
+        }
+      }
+
+      // 2. Current daily rate: from last collect (or creation if never collected), pending fees only
       const currentStart = pos.lastCollectAt || pos.createdAt;
       if (currentStart > 0 && pos.positionValueUSD >= 10 && pos.feesValueUSD > 0) {
         const holdMs = Date.now() - currentStart;
@@ -885,7 +928,6 @@ async function fetchPositions(forceRefresh = false) {
           pos.holdHours = Math.floor(holdHours);
           pos.holdMinutes = Math.floor((holdMs % (60 * 60 * 1000)) / (60 * 1000));
           pos.hasCollected = !!pos.lastCollectAt;
-          pos.currentStartType = pos.lastCollectAt ? 'collect' : 'create';
         }
       }
 
