@@ -465,9 +465,9 @@ async function getV3MintTimeByTokenId(tokenId) {
 
   try {
     const currentBlock = await logProvider.getBlockNumber();
-    const lookback = 432000; // ~15 days
+    const lookback = 2600000; // ~90 days
     const fromBlock = Math.max(0, currentBlock - lookback);
-    const blockStep = 5000; // publicnode supports up to 50000
+    const blockStep = 10000; // publicnode supports up to 50000, use 10000 for speed
     const tokenIdHex = ethers.zeroPadValue(ethers.toBeHex(tokenId), 32);
 
     // Forward scan (oldest first)
@@ -784,22 +784,36 @@ async function fetchPositions(forceRefresh = false) {
     //    (subgraph returns empty, chain fallback per-wallet may have missed due to rate limits)
     const missing = activeV3Positions.filter(p => !p.createdAt);
     if (missing.length > 0) {
-      console.log(`Skipping ${missing.length} mint time lookups (will fill lazily in background)`);
-      // Fire-and-forget: fill mint times in background, don't block response
-      Promise.all(missing.map(async (pos) => {
-        pos.createdAt = await getV3MintTimeByTokenId(BigInt(pos.tokenId));
-      })).catch(e => console.error('Background mint time fill failed:', e.message));
+      console.log(`Fetching mint times for ${missing.length} active V3 positions: ${missing.map(p => p.tokenId).join(', ')}`);
+      const MINT_TIMEOUT = 15000; // 15s per token
+      await Promise.all(missing.map(async (pos) => {
+        try {
+          pos.createdAt = await Promise.race([
+            getV3MintTimeByTokenId(BigInt(pos.tokenId)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), MINT_TIMEOUT))
+          ]);
+        } catch (e) {
+          console.log(`  Mint time timeout for #${pos.tokenId}, skipping`);
+          pos.createdAt = 0;
+        }
+      }));
     }
 
-    // 2. Fetch Collect events (background, don't block response)
+    // 2. Fetch Collect events (with 30s timeout)
     const tokenIds = activeV3Positions.map(p => BigInt(p.tokenId));
-    console.log(`Fetching Collect events in background for ${tokenIds.length} active V3 positions...`);
-    getV3LastCollectTimes(tokenIds).then(collectTimes => {
+    console.log(`Fetching Collect events for ${tokenIds.length} active V3 positions...`);
+    try {
+      const collectTimes = await Promise.race([
+        getV3LastCollectTimes(tokenIds),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000))
+      ]);
       for (const pos of activeV3Positions) {
         pos.lastCollectAt = collectTimes[pos.tokenId] || 0;
       }
       console.log(`Collect events: found ${Object.keys(collectTimes).length} positions with collects`);
-    }).catch(e => console.error('Background collect fetch failed:', e.message));
+    } catch (e) {
+      console.log(`Collect events timed out, skipping`);
+    }
   }
 
   // For active V4 positions: infer last fee-collect reset time from zero-amount ModifyLiquidity events
