@@ -465,7 +465,7 @@ async function getV3MintTimeByTokenId(tokenId) {
 
   try {
     const currentBlock = await logProvider.getBlockNumber();
-    const lookback = 900000; // ~30 days
+    const lookback = 432000; // ~15 days
     const fromBlock = Math.max(0, currentBlock - lookback);
     const blockStep = 5000; // publicnode supports up to 50000
     const tokenIdHex = ethers.zeroPadValue(ethers.toBeHex(tokenId), 32);
@@ -496,7 +496,7 @@ async function getV3MintTimeByTokenId(tokenId) {
     console.error(`  Mint time query failed for #${key}:`, e.message?.slice(0, 120));
   }
 
-  console.log(`  Mint time NOT FOUND for #${key} within 90-day lookback`);
+  console.log(`  Mint time NOT FOUND for #${key} within 15-day lookback`);
   mintTimeCache[key] = { time: 0, ts: Date.now() };
   return 0;
 }
