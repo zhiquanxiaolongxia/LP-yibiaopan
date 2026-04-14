@@ -201,7 +201,7 @@
     font-size: 11px; color: var(--text-muted);
   }
 
-  /* ── Responsive ── */
+  /* ── Responsive: Tablet ── */
   @media (max-width: 768px) {
     .shell { padding: 0 10px; }
     .stats-strip { grid-template-columns: repeat(2, 1fr); }
@@ -214,11 +214,77 @@
     .header { flex-wrap: wrap; gap: 8px; }
     .detail-grid { grid-template-columns: 1fr 1fr; }
   }
+
+  /* ── Responsive: Mobile ── */
   @media (max-width: 480px) {
-    .stats-strip { grid-template-columns: 1fr; }
-    .stat-cell { border-right: none !important; border-bottom: 1px solid var(--border); }
-    .stat-cell:last-child { border-bottom: none; }
-    .detail-grid { grid-template-columns: 1fr 1fr; }
+    .shell { padding: 0 8px; }
+
+    /* Header: 紧凑单行 */
+    .header { padding: 10px 0; gap: 6px; }
+    .logo { width: 26px; height: 26px; font-size: 13px; border-radius: 5px; }
+    .header-title { font-size: 12px; }
+    .meta-text { display: none; }
+    .chain-tag { font-size: 10px; padding: 3px 8px; }
+    .refresh-btn { font-size: 11px; padding: 6px 12px; }
+
+    /* Stats: 2x3 grid, 最后一个独占整行 */
+    .stats-strip { grid-template-columns: repeat(2, 1fr); }
+    .stat-cell { padding: 12px 10px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .stat-cell:nth-child(2n) { border-right: none; }
+    .stat-cell:last-child { grid-column: 1 / -1; border-bottom: none; border-right: none; }
+    .stat-val { font-size: 20px; }
+    .stat-label { font-size: 10px; }
+
+    /* Filter: 小按钮可滚动 */
+    .filter-row { overflow-x: auto; flex-wrap: nowrap; padding: 8px 0; gap: 6px; -webkit-overflow-scrolling: touch; }
+    .filter-label { white-space: nowrap; flex-shrink: 0; }
+    .ftag { font-size: 11px; padding: 4px 10px; white-space: nowrap; flex-shrink: 0; }
+
+    /* Table → Card 模式 */
+    .pos-table, .pos-table thead, .pos-table tbody, .pos-table td, .pos-table th {
+      display: block; width: 100%;
+    }
+    .pos-table thead { display: none; }
+    .pos-table tr.detail-row { display: none; }
+    .pos-table tr.detail-row.open { display: block; }
+    .pos-row { display: flex; flex-wrap: wrap; align-items: center; padding: 12px 10px; gap: 4px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+    .pos-row td { padding: 2px 0; border: none; }
+
+    /* 卡片布局: 第一行 交易对 + 状态, 第二行 日化 + 价值 */
+    .pos-row td.pair-cell { width: 60%; font-size: 14px; font-weight: 700; order: 1; }
+    .pos-row td.wallet-cell { display: none; }
+    .pos-row td.range-cell { display: none; }
+    .pos-row td.status-cell { width: 40%; text-align: right; order: 2; }
+    .pos-row td.fees-cell { display: none; }
+    .pos-row td.apr-cell { width: 50%; text-align: left; order: 3; font-size: 14px; color: var(--green); }
+    .pos-row td.val-cell { width: 50%; text-align: right; order: 4; font-size: 14px; }
+
+    /* Protocol tag 在手机上更紧凑 */
+    .protocol-tag { font-size: 9px; padding: 1px 6px; margin-left: 6px; }
+    .status-text { font-size: 12px; }
+    .range-dot { width: 7px; height: 7px; margin-right: 4px; }
+
+    /* Detail row 手机适配 */
+    .detail-row { display: none; }
+    .detail-row.open { display: block; }
+    .detail-row td { display: block; }
+    .detail-inner { padding: 14px 12px; border-left-width: 2px; }
+    .detail-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .d-val { font-size: 13px; }
+    .d-label { font-size: 10px; }
+    .range-bar-labels { font-size: 10px; }
+    .range-bar-current { font-size: 11px; }
+
+    /* Footer */
+    .footer { font-size: 10px; padding: 10px 0 16px; flex-direction: column; gap: 4px; align-items: center; }
+  }
+
+  /* ── Responsive: Small phone (≤360px) ── */
+  @media (max-width: 360px) {
+    .pos-row td.pair-cell { font-size: 13px; }
+    .pos-row td.val-cell { font-size: 13px; }
+    .stat-val { font-size: 18px; }
+    .detail-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
   }
 </style>
 </head>
@@ -367,7 +433,7 @@ function render(data) {
   if(!ws.length){ $('content').innerHTML='<div class="state-box"><div class="state-text">暂无活跃头寸</div></div>'; return; }
 
   let h=`<table class="pos-table"><thead><tr>
-    <th>交易对</th><th style="text-align:center">钱包</th><th class="hide-m" style="text-align:center">区间</th><th style="text-align:center">状态</th><th class="hide-m" style="text-align:right">手续费</th><th style="text-align:right">累计日化</th><th style="text-align:right">当前日化</th><th style="text-align:right">价值</th>
+    <th>交易对</th><th style="text-align:center">钱包</th><th class="hide-m" style="text-align:center">区间</th><th style="text-align:center">状态</th><th class="hide-m" style="text-align:right">手续费</th><th style="text-align:right">当前日化</th><th style="text-align:right">价值</th>
   </tr></thead><tbody>`;
 
   for(const w of ws){
@@ -382,10 +448,9 @@ function render(data) {
         <td class="range-cell hide-m">${fP(p.lowerPrice)} — ${fP(p.upperPrice)}</td>
         <td class="status-cell"><span class="range-dot ${p.inRange?'in':'out'}"></span><span class="status-text ${p.inRange?'in':'out'}">${p.inRange?'区间内':'区间外'}</span></td>
         <td class="fees-cell hide-m" style="text-align:right">${fU(p.feesValueUSD)}</td>
-        <td class="apr-cell">${p.dailyRateCumulative ? p.dailyRateCumulative.toFixed(2)+'%' : '—'}${p.dailyRateCumulative ? `<div class="apr-sub">${p.totalDays>=1 ? p.totalDays+'天' : p.totalHours+'h'+((p.totalMinutes||0)>0?(p.totalMinutes+'m'):'')}</div>` : ''}</td>
         <td class="apr-cell">${p.dailyRateCurrent ? p.dailyRateCurrent.toFixed(2)+'%' : '—'}${p.dailyRateCurrent ? `<div class="apr-sub">${p.holdDays>=1 ? p.holdDays+'天' : p.holdHours+'h'+((p.holdMinutes||0)>0?(p.holdMinutes+'m'):'')}${p.hasCollected ? ' ↻' : ''}</div>` : ''}</td>
         <td class="val-cell">${fU(p.totalValueUSD)}</td>
-      </tr><tr class="detail-row" id="det-${uid}"><td colspan="8">${mkDet(p)}</td></tr>`;
+      </tr><tr class="detail-row" id="det-${uid}"><td colspan="7">${mkDet(p)}</td></tr>`;
     }
     // 已结束头寸暂时隐藏
   }
