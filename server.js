@@ -73,9 +73,9 @@ const v4IdCache = {};
 const V4_ID_CACHE_TTL = 10 * 60 * 1000; // 10 min, match main cache
 
 // --- Concurrency control ---
-const MAX_CONCURRENT = 4; // was 2, Ankr private can handle more
-const BATCH_SIZE = 10; // max parallel RPC calls per batch (was 5)
-const BATCH_DELAY = 150; // ms between batches (was 300)
+const MAX_CONCURRENT = 3; // was 2, moderate increase
+const BATCH_SIZE = 8; // max parallel RPC calls per batch (was 5)
+const BATCH_DELAY = 200; // ms between batches (was 300)
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -389,7 +389,7 @@ async function getV3LastCollectTimes(tokenIds) {
 
   try {
     const currentBlock = await logProvider.getBlockNumber();
-    const blockStep = 5000; // publicnode limit
+    const blockStep = 5000; // publicnode supports up to 50000
     const lookbackBlocks = 432000; // ~15 days on BSC (~3s/block)
     const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
 
@@ -465,12 +465,12 @@ async function getV3MintTimeByTokenId(tokenId) {
 
   try {
     const currentBlock = await logProvider.getBlockNumber();
-    const lookback = 2600000; // ~90 days
+    const lookback = 900000; // ~30 days
     const fromBlock = Math.max(0, currentBlock - lookback);
-    const blockStep = 5000;
+    const blockStep = 5000; // publicnode supports up to 50000
     const tokenIdHex = ethers.zeroPadValue(ethers.toBeHex(tokenId), 32);
 
-    // Forward scan (oldest first) — mint happened once early
+    // Forward scan (oldest first)
     for (let start = fromBlock; start <= currentBlock; start += blockStep) {
       const end = Math.min(start + blockStep - 1, currentBlock);
       try {
@@ -488,9 +488,9 @@ async function getV3MintTimeByTokenId(tokenId) {
           return time;
         }
       } catch (e) {
-        await sleep(1500); // rate limited, bigger backoff
+        await sleep(500); // rate limited backoff
       }
-      await sleep(300);
+      await sleep(50); // Ankr private has generous limits
     }
   } catch (e) {
     console.error(`  Mint time query failed for #${key}:`, e.message?.slice(0, 120));
@@ -784,20 +784,22 @@ async function fetchPositions(forceRefresh = false) {
     //    (subgraph returns empty, chain fallback per-wallet may have missed due to rate limits)
     const missing = activeV3Positions.filter(p => !p.createdAt);
     if (missing.length > 0) {
-      console.log(`Fetching mint times for ${missing.length} active V3 positions: ${missing.map(p => p.tokenId).join(', ')}`);
-      for (const pos of missing) {
+      console.log(`Skipping ${missing.length} mint time lookups (will fill lazily in background)`);
+      // Fire-and-forget: fill mint times in background, don't block response
+      Promise.all(missing.map(async (pos) => {
         pos.createdAt = await getV3MintTimeByTokenId(BigInt(pos.tokenId));
-      }
+      })).catch(e => console.error('Background mint time fill failed:', e.message));
     }
 
-    // 2. Fetch Collect events
+    // 2. Fetch Collect events (background, don't block response)
     const tokenIds = activeV3Positions.map(p => BigInt(p.tokenId));
-    console.log(`Fetching Collect events for ${tokenIds.length} active V3 positions...`);
-    const collectTimes = await getV3LastCollectTimes(tokenIds);
-    for (const pos of activeV3Positions) {
-      pos.lastCollectAt = collectTimes[pos.tokenId] || 0;
-    }
-    console.log(`Collect events: found ${Object.keys(collectTimes).length} positions with collects`);
+    console.log(`Fetching Collect events in background for ${tokenIds.length} active V3 positions...`);
+    getV3LastCollectTimes(tokenIds).then(collectTimes => {
+      for (const pos of activeV3Positions) {
+        pos.lastCollectAt = collectTimes[pos.tokenId] || 0;
+      }
+      console.log(`Collect events: found ${Object.keys(collectTimes).length} positions with collects`);
+    }).catch(e => console.error('Background collect fetch failed:', e.message));
   }
 
   // For active V4 positions: infer last fee-collect reset time from zero-amount ModifyLiquidity events
