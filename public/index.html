@@ -185,6 +185,12 @@
   }
   .protocol-tag.v3 { color: var(--yellow); background: var(--yellow-dim); }
   .protocol-tag.v4 { color: #22d3ee; background: rgba(34,211,238,0.12); }
+  .fee-tag {
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    color: var(--text-muted); background: rgba(148,163,184,0.10);
+    padding: 2px 7px; border-radius: 4px; margin-left: 5px;
+    vertical-align: middle;
+  }
   .wallet-cell { font-size: 13px; color: var(--text-dim); text-align: center; }
   .range-cell { font-family: var(--mono); font-size: 12px; color: var(--text-muted); text-align: center; }
   .status-cell { text-align: center; white-space: nowrap; }
@@ -594,7 +600,7 @@ function render(data) {
       const uid=w.address.slice(-6)+'-'+p.tokenId;
       const proto=p.protocol||'V3';
       h+=`<tr class="pos-row" onclick="togExp('${uid}')">
-        <td class="pair-cell">${p.token0.symbol}/${p.token1.symbol}<span class="protocol-tag ${proto.toLowerCase()}">${proto}</span></td>
+        <td class="pair-cell">${p.token0.symbol}/${p.token1.symbol}<span class="protocol-tag ${proto.toLowerCase()}">${proto}</span>${p.feeLabel?`<span class="fee-tag">${p.feeLabel}</span>`:''}</td>
         <td class="wallet-cell">${w.name}</td>
         <td class="range-cell hide-m">${fP(p.lowerPrice)} — ${fP(p.upperPrice)}</td>
         <td class="status-cell"><span class="range-dot ${p.inRange?'in':'out'}"></span><span class="status-text ${p.inRange?'in':'out'}">${p.inRange?'区间内':'区间外'}</span></td>
