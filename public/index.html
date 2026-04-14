@@ -76,6 +76,72 @@
   .stat-val.red { color: var(--red); }
   .stat-val.yellow { color: var(--yellow); }
 
+  /* ── Wallet Manager ── */
+  .wallet-mgr {
+    border-bottom: 1px solid var(--border);
+  }
+  .wallet-mgr-toggle {
+    width: 100%; display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 16px; background: transparent; border: none;
+    color: var(--text-dim); font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: color 0.12s;
+  }
+  .wallet-mgr-toggle:hover { color: var(--text); }
+  .wallet-mgr-toggle .arrow { transition: transform 0.2s; }
+  .wallet-mgr-toggle.open .arrow { transform: rotate(180deg); }
+  .wallet-mgr-body {
+    display: none; padding: 0 16px 14px;
+  }
+  .wallet-mgr-body.open { display: block; }
+  .wm-add-row {
+    display: flex; gap: 8px; margin-bottom: 10px;
+  }
+  .wm-input {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); padding: 6px 10px; outline: none;
+    transition: border-color 0.12s;
+  }
+  .wm-input:focus { border-color: var(--accent); }
+  .wm-input.addr { flex: 3; min-width: 0; }
+  .wm-input.name { flex: 1; min-width: 80px; }
+  .wm-add-btn {
+    font-family: var(--font); font-size: 12px; font-weight: 600;
+    color: #fff; background: var(--accent); border: none;
+    padding: 6px 16px; border-radius: 6px; cursor: pointer;
+    white-space: nowrap; transition: background 0.12s;
+  }
+  .wm-add-btn:hover { background: #5558e6; }
+  .wm-add-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .wm-list {
+    display: flex; flex-direction: column; gap: 4px;
+    max-height: 240px; overflow-y: auto;
+  }
+  .wm-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 10px; border-radius: 6px; background: var(--surface);
+    font-size: 12px;
+  }
+  .wm-item-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .wm-item-name { font-weight: 600; color: var(--text); white-space: nowrap; }
+  .wm-item-addr { font-family: var(--mono); font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wm-del-btn {
+    background: transparent; border: none; color: var(--text-muted);
+    font-size: 14px; cursor: pointer; padding: 2px 6px; border-radius: 4px;
+    transition: all 0.12s; flex-shrink: 0;
+  }
+  .wm-del-btn:hover { color: var(--red); background: var(--red-dim); }
+  .wm-error {
+    font-size: 11px; color: var(--red); margin-top: 6px; display: none;
+  }
+
+  @media (max-width: 480px) {
+    .wm-add-row { flex-wrap: wrap; }
+    .wm-input.addr { flex: 1 1 100%; }
+    .wm-input.name { flex: 1 1 calc(50% - 4px); }
+    .wm-add-btn { flex: 0 0 auto; }
+  }
+
   /* ── Filter ── */
   .filter-row {
     display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
@@ -326,6 +392,22 @@
     </div>
   </div>
 
+  <div class="wallet-mgr" id="walletMgr">
+    <button class="wallet-mgr-toggle" id="wmToggle" onclick="toggleWalletMgr()">
+      <span>💼 管理钱包 (<span id="wmCount">0</span>)</span>
+      <span class="arrow">▼</span>
+    </button>
+    <div class="wallet-mgr-body" id="wmBody">
+      <div class="wm-add-row">
+        <input class="wm-input addr" id="wmAddr" placeholder="0x... BSC 地址" maxlength="42">
+        <input class="wm-input name" id="wmName" placeholder="名称">
+        <button class="wm-add-btn" id="wmAddBtn" onclick="addWallet()">添加</button>
+      </div>
+      <div class="wm-error" id="wmError"></div>
+      <div class="wm-list" id="wmList"></div>
+    </div>
+  </div>
+
   <div id="filterBar" class="filter-row" style="display:none;"></div>
 
   <div id="content">
@@ -347,6 +429,75 @@ let nextR = Date.now() + RI;
 let curData = null, activeF = 'all', expId = null;
 
 function $(id) { return document.getElementById(id); }
+let walletList = [];
+
+// --- Wallet Manager ---
+function toggleWalletMgr() {
+  const toggle = $('wmToggle');
+  const body = $('wmBody');
+  toggle.classList.toggle('open');
+  body.classList.toggle('open');
+}
+
+async function loadWallets() {
+  try {
+    const r = await fetch('/api/wallets');
+    walletList = await r.json();
+    renderWalletList();
+  } catch (e) { console.error('Load wallets failed:', e); }
+}
+
+function renderWalletList() {
+  $('wmCount').textContent = walletList.length;
+  const list = $('wmList');
+  list.innerHTML = walletList.map(w =>
+    `<div class="wm-item">
+      <div class="wm-item-left">
+        <span class="wm-item-name">${w.name}</span>
+        <span class="wm-item-addr">${w.address}</span>
+      </div>
+      <button class="wm-del-btn" onclick="delWallet('${w.address}')" title="删除">✖</button>
+    </div>`
+  ).join('');
+}
+
+async function addWallet() {
+  const addr = $('wmAddr').value.trim();
+  const name = $('wmName').value.trim();
+  const errEl = $('wmError');
+  errEl.style.display = 'none';
+
+  if (!addr || !name) { errEl.textContent = '请填写地址和名称'; errEl.style.display = 'block'; return; }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) { errEl.textContent = '无效的 BSC 地址'; errEl.style.display = 'block'; return; }
+
+  $('wmAddBtn').disabled = true;
+  try {
+    const r = await fetch('/api/wallets', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: addr, name })
+    });
+    const d = await r.json();
+    if (!r.ok) { errEl.textContent = d.error || '添加失败'; errEl.style.display = 'block'; return; }
+    walletList = d.wallets;
+    renderWalletList();
+    $('wmAddr').value = ''; $('wmName').value = '';
+    loadData(true); // refresh positions with new wallet
+  } catch (e) { errEl.textContent = e.message; errEl.style.display = 'block'; }
+  finally { $('wmAddBtn').disabled = false; }
+}
+
+async function delWallet(addr) {
+  if (!confirm('确认删除该地址？')) return;
+  try {
+    const r = await fetch('/api/wallets/' + encodeURIComponent(addr), { method: 'DELETE' });
+    const d = await r.json();
+    if (r.ok) {
+      walletList = d.wallets;
+      renderWalletList();
+      loadData(true);
+    }
+  } catch (e) { console.error('Delete wallet failed:', e); }
+}
 function fU(v) {
   if (v==null||isNaN(v)) return '$0';
   if (v>=1e6) return '$'+(v/1e6).toFixed(2)+'M';
@@ -478,6 +629,7 @@ setInterval(()=>{
   if(rem<=0){loadData(true);nextR=Date.now()+RI;}
 },1000);
 
+loadWallets();
 loadData();
 </script>
 </body>

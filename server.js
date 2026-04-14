@@ -3,11 +3,34 @@ const express = require('express');
 const path = require('path');
 const { ethers } = require('ethers');
 
+const fs = require('fs');
 const app = express();
+app.use(express.json());
 const PORT = parseInt(process.env.PORT || '5179');
 
 // --- Config (from .env) ---
-const WALLETS = JSON.parse(process.env.WALLETS || '[]');
+const WALLETS_FILE = path.join(__dirname, 'wallets.json');
+const ENV_WALLETS = JSON.parse(process.env.WALLETS || '[]');
+
+// Dynamic wallet list: load from wallets.json, fallback to .env
+function loadWallets() {
+  try {
+    if (fs.existsSync(WALLETS_FILE)) {
+      return JSON.parse(fs.readFileSync(WALLETS_FILE, 'utf8'));
+    }
+  } catch (e) {
+    console.error('Failed to load wallets.json:', e.message);
+  }
+  // Initialize from .env
+  saveWallets(ENV_WALLETS);
+  return [...ENV_WALLETS];
+}
+
+function saveWallets(wallets) {
+  fs.writeFileSync(WALLETS_FILE, JSON.stringify(wallets, null, 2), 'utf8');
+}
+
+let WALLETS = loadWallets();
 const BSC_RPC = process.env.BSC_RPC || 'https://bsc-dataseed.binance.org';
 const ANKR_ADVANCED_URL = process.env.ANKR_ADVANCED_URL || (process.env.BSC_RPC?.includes('ankr.com') ? process.env.BSC_RPC.replace('/bsc/', '/multichain/') : '');
 // V3
@@ -806,9 +829,12 @@ async function fetchPositions(forceRefresh = false) {
   if (!forceRefresh && cache.data && (Date.now() - cache.timestamp < CACHE_TTL)) {
     return cache.data;
   }
-  // Clear V4 ID cache on force refresh so new positions show up
+  // Clear all caches on force refresh
   if (forceRefresh) {
     for (const k of Object.keys(v4IdCache)) delete v4IdCache[k];
+    for (const k of Object.keys(v3CollectCache)) delete v3CollectCache[k];
+    for (const k of Object.keys(v3CreatedChainCache)) delete v3CreatedChainCache[k];
+    console.log('Force refresh: cleared all caches');
   }
 
   const v3pm = new ethers.Contract(V3_POSITION_MANAGER, V3_POSITION_MANAGER_ABI, provider);
@@ -1028,6 +1054,36 @@ app.get('/api/health', (req, res) => {
       v4IdCacheEntries: Object.keys(v4IdCache).length,
     },
   });
+});
+
+// --- Wallet management API ---
+app.get('/api/wallets', (req, res) => {
+  res.json(WALLETS);
+});
+
+app.post('/api/wallets', (req, res) => {
+  const { address, name } = req.body;
+  if (!address || !name) return res.status(400).json({ error: '需要 address 和 name' });
+  const addr = address.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(addr)) return res.status(400).json({ error: '无效的 BSC 地址' });
+  if (WALLETS.some(w => w.address.toLowerCase() === addr)) return res.status(409).json({ error: '地址已存在' });
+  if (WALLETS.length >= 30) return res.status(400).json({ error: '最多支持 30 个地址' });
+  WALLETS.push({ address: addr, name: name.trim() });
+  saveWallets(WALLETS);
+  cache = { data: null, timestamp: 0 }; // clear cache so next fetch uses new list
+  console.log(`Wallet added: ${name.trim()} (${addr})`);
+  res.json({ ok: true, wallets: WALLETS });
+});
+
+app.delete('/api/wallets/:address', (req, res) => {
+  const addr = req.params.address.toLowerCase();
+  const idx = WALLETS.findIndex(w => w.address.toLowerCase() === addr);
+  if (idx === -1) return res.status(404).json({ error: '地址不存在' });
+  const removed = WALLETS.splice(idx, 1)[0];
+  saveWallets(WALLETS);
+  cache = { data: null, timestamp: 0 };
+  console.log(`Wallet removed: ${removed.name} (${addr})`);
+  res.json({ ok: true, wallets: WALLETS });
 });
 
 app.get('/api/positions', async (req, res) => {
