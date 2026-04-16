@@ -263,14 +263,29 @@ async function getUSDPrices(tokenAddresses, positionsData) {
     }
   }
 
+  // Derive prices from pool data, preferring active in-range positions
+  // Track which source set each price so we can upgrade later
+  const priceSource = {}; // addr -> 'active-inrange' | 'active' | 'inactive'
   for (const pos of positionsData) {
     const t0 = pos.token0addr.toLowerCase();
     const t1 = pos.token1addr.toLowerCase();
+    if (pos.currentPrice <= 0) continue;
 
-    if (STABLECOINS.has(t1) && !prices[t0] && pos.currentPrice > 0) {
-      prices[t0] = pos.currentPrice;
-    } else if (STABLECOINS.has(t0) && !prices[t1] && pos.currentPrice > 0) {
-      prices[t1] = 1 / pos.currentPrice;
+    let target, price;
+    if (STABLECOINS.has(t1) && !STABLECOINS.has(t0)) {
+      target = t0; price = pos.currentPrice;
+    } else if (STABLECOINS.has(t0) && !STABLECOINS.has(t1)) {
+      target = t1; price = 1 / pos.currentPrice;
+    } else continue;
+
+    const src = pos.liquidityActive && pos.inRange ? 'active-inrange'
+              : pos.liquidityActive ? 'active'
+              : 'inactive';
+    const rank = { 'active-inrange': 3, 'active': 2, 'inactive': 1 };
+    const existing = priceSource[target];
+    if (!prices[target] || rank[src] > rank[existing]) {
+      prices[target] = price;
+      priceSource[target] = src;
     }
   }
 
