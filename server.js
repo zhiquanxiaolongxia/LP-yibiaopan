@@ -496,6 +496,103 @@ async function getV3LastCollectTimes(tokenIds) {
   return results;
 }
 
+// V4: get last Collect timestamps from PoolManager ModifyLiquidity events (liquidityDelta=0)
+const v4CollectCache = {};
+const V4_COLLECT_CACHE_TTL = 30 * 60 * 1000;
+const MODIFY_LIQUIDITY_TOPIC = '0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec';
+
+async function getV4LastCollectTimes(positions) {
+  // positions: array of { tokenId, poolId, tickLower, tickUpper }
+  const results = {};
+  const toQuery = [];
+  const now = Date.now();
+
+  for (const pos of positions) {
+    const key = pos.tokenId.toString();
+    const cached = v4CollectCache[key];
+    if (cached && (now - cached.ts < V4_COLLECT_CACHE_TTL)) {
+      if (cached.collectAt) results[key] = cached.collectAt;
+    } else {
+      toQuery.push(pos);
+    }
+  }
+
+  if (toQuery.length === 0) return results;
+
+  // Group by poolId to minimize queries
+  const byPool = new Map();
+  for (const pos of toQuery) {
+    const arr = byPool.get(pos.poolId) || [];
+    arr.push(pos);
+    byPool.set(pos.poolId, arr);
+  }
+
+  const V4_PM_PADDED = ethers.zeroPadValue(V4_POSITION_MANAGER, 32);
+
+  for (const [poolId, poolPositions] of byPool) {
+    try {
+      // Query all ModifyLiquidity events for this pool from PositionManager
+      const body = {
+        jsonrpc: '2.0', method: 'ankr_getLogs', id: 1,
+        params: {
+          blockchain: 'bsc',
+          address: [V4_POOL_MANAGER],
+          topics: [[MODIFY_LIQUIDITY_TOPIC], [poolId], [V4_PM_PADDED]],
+          fromBlock: 1, toBlock: 'latest',
+          pageSize: 100, descOrder: true,
+        },
+      };
+
+      const ankrUrl = ANKR_ADVANCED_URL || BSC_RPC.replace('/bsc/', '/multichain/');
+      const res = await fetch(ankrUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = await res.json();
+      const logs = data.result?.logs || [];
+
+      for (const pos of poolPositions) {
+        const key = pos.tokenId.toString();
+        let found = false;
+
+        for (const log of logs) {
+          try {
+            const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
+              ['int24', 'int24', 'int256', 'bytes32'], log.data
+            );
+            const tickLower = Number(decoded[0]);
+            const tickUpper = Number(decoded[1]);
+            const liquidityDelta = decoded[2];
+
+            // Match: same tick range AND liquidityDelta === 0 (pure collect)
+            if (tickLower === pos.tickLower && tickUpper === pos.tickUpper && liquidityDelta === 0n) {
+              const time = parseInt(log.timestamp, 16) * 1000;
+              results[key] = time;
+              v4CollectCache[key] = { collectAt: time, ts: now };
+              console.log(`  V4 last collect for #${key}: ${new Date(time).toISOString()} (ticks ${tickLower}~${tickUpper})`);
+              found = true;
+              break;
+            }
+          } catch (e) { /* skip malformed log */ }
+        }
+
+        if (!found) {
+          v4CollectCache[key] = { collectAt: 0, ts: now };
+        }
+      }
+    } catch (e) {
+      console.error(`  V4 collect query failed for pool ${poolId.slice(0, 20)}:`, e.message?.slice(0, 100));
+      for (const pos of poolPositions) {
+        v4CollectCache[pos.tokenId.toString()] = { collectAt: 0, ts: now };
+      }
+    }
+  }
+
+  return results;
+}
+
 // V3: fallback - get creation time from NFT mint Transfer event for a SINGLE tokenId
 const v3CreatedChainCache = {};
 const V3_CREATED_CHAIN_TTL = 60 * 60 * 1000; // 1h
@@ -701,7 +798,7 @@ async function fetchWalletV4Positions(wallet, v4pm, stateView) {
         walletAddress,
         protocol: 'V4',
         createdAt: createdAtMs || 0,
-        lastCollectAt: 0, // V4 collect tracking TBD
+        lastCollectAt: 0, // filled later by getV4LastCollectTimes
       });
     } catch (e) {
       console.error(`  V4 error for token ${tokenId}:`, e.message.slice(0, 80));
@@ -883,6 +980,31 @@ async function fetchPositions(forceRefresh = false) {
       pos.lastCollectAt = collectTimes[pos.tokenId] || 0;
     }
     console.log(`Collect events: found ${Object.keys(collectTimes).length} positions with collects`);
+  }
+
+  // For active V4 positions: fill in lastCollectAt via PoolManager ModifyLiquidity events
+  const activeV4Positions = [];
+  for (const wr of walletResults) {
+    for (const pos of wr.positions) {
+      if (pos.protocol === 'V4' && pos.liquidityActive) {
+        activeV4Positions.push(pos);
+      }
+    }
+  }
+
+  if (activeV4Positions.length > 0) {
+    console.log(`Fetching Collect events for ${activeV4Positions.length} active V4 positions...`);
+    const v4Inputs = activeV4Positions.map(p => ({
+      tokenId: p.tokenId,
+      poolId: p.poolAddress,
+      tickLower: p.tickLower,
+      tickUpper: p.tickUpper,
+    }));
+    const v4CollectTimes = await getV4LastCollectTimes(v4Inputs);
+    for (const pos of activeV4Positions) {
+      pos.lastCollectAt = v4CollectTimes[pos.tokenId] || 0;
+    }
+    console.log(`V4 Collect events: found ${Object.keys(v4CollectTimes).length} positions with collects`);
   }
 
   // Collect all token addresses and all positions for USD pricing
