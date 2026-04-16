@@ -397,7 +397,8 @@ async function getV3SubgraphData(walletAddress) {
 
 // V3: get last Collect event timestamps from chain for specific tokenIds
 const v3CollectCache = {};
-const V3_COLLECT_CACHE_TTL = 30 * 60 * 1000; // 30 min
+const V3_COLLECT_CACHE_TTL = 30 * 60 * 1000; // 30 min for found collects
+const V3_COLLECT_MISS_TTL = 2 * 60 * 1000;  // 2 min for "not found" (retry sooner)
 const COLLECT_EVENT_TOPIC = '0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01';
 
 async function getV3LastCollectTimes(tokenIds) {
@@ -408,11 +409,14 @@ async function getV3LastCollectTimes(tokenIds) {
   for (const tid of tokenIds) {
     const key = tid.toString();
     const cached = v3CollectCache[key];
-    if (cached && (now - cached.ts < V3_COLLECT_CACHE_TTL)) {
-      if (cached.collectAt) results[key] = cached.collectAt;
-    } else {
-      toQuery.push(tid);
+    if (cached) {
+      const ttl = cached.collectAt ? V3_COLLECT_CACHE_TTL : V3_COLLECT_MISS_TTL;
+      if (now - cached.ts < ttl) {
+        if (cached.collectAt) results[key] = cached.collectAt;
+        continue;
+      }
     }
+    toQuery.push(tid);
   }
 
   if (toQuery.length === 0) return results;
@@ -513,7 +517,8 @@ async function getV3LastCollectTimes(tokenIds) {
 
 // V4: get last Collect timestamps from PoolManager ModifyLiquidity events (liquidityDelta=0)
 const v4CollectCache = {};
-const V4_COLLECT_CACHE_TTL = 30 * 60 * 1000;
+const V4_COLLECT_CACHE_TTL = 30 * 60 * 1000; // 30 min for found collects
+const V4_COLLECT_MISS_TTL = 2 * 60 * 1000;  // 2 min for "not found" (retry sooner)
 const MODIFY_LIQUIDITY_TOPIC = '0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec';
 
 async function getV4LastCollectTimes(positions) {
@@ -525,11 +530,14 @@ async function getV4LastCollectTimes(positions) {
   for (const pos of positions) {
     const key = pos.tokenId.toString();
     const cached = v4CollectCache[key];
-    if (cached && (now - cached.ts < V4_COLLECT_CACHE_TTL)) {
-      if (cached.collectAt) results[key] = cached.collectAt;
-    } else {
-      toQuery.push(pos);
+    if (cached) {
+      const ttl = cached.collectAt ? V4_COLLECT_CACHE_TTL : V4_COLLECT_MISS_TTL;
+      if (now - cached.ts < ttl) {
+        if (cached.collectAt) results[key] = cached.collectAt;
+        continue;
+      }
     }
+    toQuery.push(pos);
   }
 
   if (toQuery.length === 0) return results;
